@@ -1,0 +1,103 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: CloudTrail Lake for S3 data events
+
+Parameters:
+  KmsKeyAliasName:
+    Description: An alias to refer to the CloudTrail Lake event data store KMS key
+    Type: String
+    Default: alias/cloudtrail/eventdatastore_key
+    AllowedPattern: ^alias\/[a-zA-Z0-9\_\-\/]*$
+  EventDataStoreName:
+    Description: The name for the CloudTrail Lake event data store
+    Type: String
+    MinLength: "3"
+    MaxLength: "128"
+    AllowedPattern: ^[a-zA-Z0-9\_\-\.]*$
+  EventDataStoreRetentionPeriod:
+    Description: The retention period of the event data store, in days
+    Type: Number
+    Default: "30"
+    MinValue: "7"
+    MaxValue: "3653"
+
+Resources:
+  CloudTrailEventDataStore:
+    DependsOn: CloudTrailKmsKeyAlias
+    Type: AWS::CloudTrail::EventDataStore
+    Properties:
+      AdvancedEventSelectors:
+        - Name: "S3 Read-Only Data Events"
+          FieldSelectors:
+            - Field: "eventCategory"
+              Equals: ["Data"]
+            - Field: "resources.type"
+              Equals: ["AWS::S3::Object"]
+            # - Field: "readOnly"
+            #   Equals: ["true"]
+      BillingMode: EXTENDABLE_RETENTION_PRICING
+      IngestionEnabled: true
+      KmsKeyId: !Ref CloudTrailKmsKey
+      MultiRegionEnabled: true
+      Name: !Ref EventDataStoreName
+      # OrganizationEnabled: true
+      RetentionPeriod: !Ref EventDataStoreRetentionPeriod
+      TerminationProtectionEnabled: true
+
+  CloudTrailKmsKeyAlias:
+    DependsOn: CloudTrailKmsKey
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Ref KmsKeyAliasName
+      TargetKeyId: !Ref CloudTrailKmsKey
+
+  CloudTrailKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CloudTrail Lake event data store encryption key
+      Enabled: true
+      EnableKeyRotation: true
+      KeyUsage: ENCRYPT_DECRYPT
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: Key policy for CloudTrail Lake
+        Statement:
+          - Sid: The key created for CloudTrail to encrypt event data stores.
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action:
+              - "kms:GenerateDataKey"
+              - "kms:Decrypt"
+            Resource: "*"
+          - Sid: Enable Root User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:user/cloud_user"
+                - !Sub "arn:aws:iam::${AWS::AccountId}:role/CustomSecurityAudit"
+            Action:
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey"
+              - "kms:CreateAlias"
+              - "kms:DeleteAlias"
+              - "kms:UpdateAlias"
+            Resource: "*"
+      MultiRegion: true
+      Origin: AWS_KMS
+      PendingWindowInDays: 30
+
+Outputs:
+  CloudTrailKmsKeyID:
+    Description: CloudTrail Lake event data store encryption key ID
+    Value: !Ref CloudTrailKmsKey
+  CloudTrailEventDataStoreID:
+    Description: CloudTrail Lake event data store ID
+    Value: !Ref CloudTrailEventDataStore
